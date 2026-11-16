@@ -1,0 +1,749 @@
+{
+  "name": "Фото-опись комплектующих при вскрытии техники (эп. 50)",
+  "nodes": [
+    {
+      "parameters": {
+        "updates": [
+          "message"
+        ],
+        "additionalFields": {}
+      },
+      "name": "Telegram Trigger",
+      "type": "n8n-nodes-base.telegramTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        0
+      ],
+      "id": "c71d3bb5-5ae9-526b-8cf0-8337ac9732e1",
+      "credentials": {
+        "telegramApi": {
+          "id": "",
+          "name": "Telegram Bot"
+        }
+      },
+      "webhookId": ""
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": false,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.message && $json.message.photo ? 'yes' : 'no' }}",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              },
+              "rightValue": "yes"
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "name": "Есть фото?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        240,
+        0
+      ],
+      "id": "68ecf192-7964-5922-8e8c-11b035ec8a3f"
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $('Telegram Trigger').item.json.message.chat.id }}",
+        "text": "Пришлите фото платы с подписью: номер заказ-наряда. Например: ZN-1042",
+        "additionalFields": {
+          "appendAttribution": false
+        }
+      },
+      "name": "Подсказка",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        480,
+        200
+      ],
+      "id": "3febf8ed-43b7-5a90-bd15-a41dcaa1ea92",
+      "credentials": {
+        "telegramApi": {
+          "id": "",
+          "name": "Telegram Bot"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "// Разбор подписи: только номер заказ-наряда (буквы, цифры, дефис, 3-32 символа). Другое не принимается.\nconst m = $json.message;\nconst cap = String(m.caption || '').trim();\nconst ok = /^[A-Za-zА-Яа-я0-9-]{3,32}$/.test(cap);\nreturn { json: { ok, order_no: cap, chat_id: m.chat.id, file_id: m.photo[m.photo.length - 1].file_id } };"
+      },
+      "name": "Разобрать подпись",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        480,
+        -100
+      ],
+      "id": "2d18c8ec-d838-5378-9040-d30a759863bd",
+      "notes": "Why Code: проверка формата подписи регулярным выражением и выбор самого большого размера фото."
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": false,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.ok }}",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "name": "Подпись верна?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        720,
+        -100
+      ],
+      "id": "20982e2e-f17b-5e23-8ea7-ddbd8c5c5e5c"
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $json.chat_id }}",
+        "text": "Не понял подпись. Нужен только номер заказ-наряда (буквы, цифры, дефис). Например: ZN-1042",
+        "additionalFields": {
+          "appendAttribution": false
+        }
+      },
+      "name": "Неверная подпись",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        960,
+        60
+      ],
+      "id": "9ad3f806-325a-52f5-b292-dfbfb131ec99",
+      "credentials": {
+        "telegramApi": {
+          "id": "",
+          "name": "Telegram Bot"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "resource": "file",
+        "fileId": "={{ $json.file_id }}",
+        "download": true
+      },
+      "name": "Скачать фото",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        960,
+        -200
+      ],
+      "id": "2e0f06fd-5866-5689-af8c-97517fbd1d7a",
+      "credentials": {
+        "telegramApi": {
+          "id": "",
+          "name": "Telegram Bot"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "// SHA-256 исходного файла и шифрование фото AES-256-GCM. Нужны NODE_FUNCTION_ALLOW_BUILTIN=crypto и ARCHIVE_KEY_HEX (64 символа hex).\nconst crypto = require('crypto');\nconst buf = await this.helpers.getBinaryDataBuffer($itemIndex, 'data');\nconst keyHex = String($env.ARCHIVE_KEY_HEX || '');\nif (!/^[0-9a-fA-F]{64}$/.test(keyHex)) throw new Error('ARCHIVE_KEY_HEX должен быть 64 символа hex');\nconst sha = crypto.createHash('sha256').update(buf).digest('hex');\nconst iv = crypto.randomBytes(12);\nconst c = crypto.createCipheriv('aes-256-gcm', Buffer.from(keyHex, 'hex'), iv);\nconst enc = Buffer.concat([c.update(buf), c.final()]);\nreturn { json: { image_sha256: sha, enc_hex: enc.toString('hex'), iv_hex: iv.toString('hex'), tag_hex: c.getAuthTag().toString('hex'), size_bytes: buf.length, b64: buf.toString('base64') } };"
+      },
+      "name": "Хеш и шифрование",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1200,
+        -200
+      ],
+      "id": "a6ffaa0d-4887-5792-8c84-9c12d0a29b73",
+      "notes": "Why Code: SHA-256 и AES-256-GCM через встроенный модуль crypto, нативных узлов для этого нет. Ключ в .env, не в сценарии."
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://ollama:11434/api/generate",
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ model: $env.OLLAMA_VISION_MODEL || 'qwen2.5vl:7b', stream: false, format: 'json', options: { temperature: 0 }, images: [ $json.b64 ], prompt: 'На фото материнская плата. Найди чипы с читаемыми серийными номерами. Верни только JSON вида {\"chips\":[{\"component\":\"название\",\"serial\":\"номер\",\"confidence\":0.0}]}. Если номер не читается, не выдумывай: пропусти чип.' }) }}",
+        "options": {
+          "timeout": 300000
+        }
+      },
+      "name": "Ollama Vision",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1440,
+        -200
+      ],
+      "id": "8da67d8e-5372-5ef5-a582-68c0e1a49dd2",
+      "notes": "Локальная vision-модель на вашем сервере: фото не уходят в чужие облака. Точность на мелких серийных номерах не проверялась; модель может ошибаться.",
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "// Разбор ответа модели. Если ответ не JSON или пустой, серийные номера не выдумываются: запись помечается needs_review.\nconst prev = $('Хеш и шифрование').item.json;\nconst cap = $('Разобрать подпись').item.json;\nlet chips = [];\ntry {\n  const j = JSON.parse(String($json.response || '{}'));\n  chips = (Array.isArray(j.chips) ? j.chips : []).map((c) => ({\n    component: String(c.component || '').slice(0, 60),\n    serial: String(c.serial || '').toUpperCase().replace(/\\s+/g, '').slice(0, 40),\n    confidence: Math.max(0, Math.min(1, Number(c.confidence) || 0)),\n  })).filter((c) => c.serial);\n} catch (e) { chips = []; }\nconst needs = chips.length === 0 || chips.some((c) => c.confidence < 0.8);\nreturn { json: { order_no: cap.order_no, chat_id: cap.chat_id, image_sha256: prev.image_sha256, enc_hex: prev.enc_hex, iv_hex: prev.iv_hex, tag_hex: prev.tag_hex, serials: JSON.stringify(chips), needs_review: needs, chips } };"
+      },
+      "name": "Разобрать ответ",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1680,
+        -200
+      ],
+      "id": "7e8ca903-7b5d-5800-8336-2257b91d371c",
+      "notes": "Why Code: безопасный разбор JSON модели, нормализация серийных номеров и порог уверенности 0,8."
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "WITH o AS (INSERT INTO repair_orders (order_no) VALUES ($1) ON CONFLICT (order_no) DO UPDATE SET order_no = EXCLUDED.order_no RETURNING id) INSERT INTO hardware_audit_log (order_id, image_sha256, photo_enc, enc_iv, enc_tag, serials, needs_review, engineer_chat, timestamp_utc, prev_record_sha256, record_sha256) SELECT o.id, $2, decode($3, 'hex'), decode($4, 'hex'), decode($5, 'hex'), $6::jsonb, $7::boolean, $8::bigint, now(), '', '' FROM o ON CONFLICT (order_id, image_sha256) DO NOTHING RETURNING id, image_sha256, record_sha256, prev_record_sha256, to_char(timestamp_utc AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS') AS ts_utc;",
+        "options": {
+          "queryReplacement": "={{ [ $json.order_no, $json.image_sha256, $json.enc_hex, $json.iv_hex, $json.tag_hex, $json.serials, $json.needs_review, $json.chat_id ] }}"
+        }
+      },
+      "name": "Записать в журнал",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        1920,
+        -200
+      ],
+      "id": "6e7ac33b-703a-5513-a609-bee30fecd6b2",
+      "credentials": {
+        "postgres": {
+          "id": "",
+          "name": "Service Audit PostgreSQL"
+        }
+      },
+      "notes": "Время и хеш записи ставит триггер в базе (init.sql), значения now() и пустые хеши в запросе перезаписываются. Повтор того же фото не создаёт запись.",
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": false,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.id || '' }}",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "name": "Запись создана?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        2160,
+        -200
+      ],
+      "id": "fb2206a2-83c6-529c-b709-c545056c7804"
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $('Разобрать ответ').item.json.chat_id }}",
+        "text": "Это фото уже есть в журнале для этого заказ-наряда. Сделайте новый снимок.",
+        "additionalFields": {
+          "appendAttribution": false
+        }
+      },
+      "name": "Дубликат фото",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        2400,
+        -60
+      ],
+      "id": "231a7a92-4302-5fdb-a34e-fb64e692877d",
+      "credentials": {
+        "telegramApi": {
+          "id": "",
+          "name": "Telegram Bot"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "// Технический акт описи (HTML): номер заказа, серийные номера, SHA-256 фото, хеш записи, время UTC, строки подписей.\nconst r = $json, p = $('Разобрать ответ').item.json;\nconst esc = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');\nconst rows = p.chips.length ? p.chips.map((c) => `<tr><td>${esc(c.component)}</td><td>${esc(c.serial)}</td><td>${c.confidence.toFixed(2)}</td></tr>`).join('') : '<tr><td colspan=\"3\">серийные номера не распознаны: проверить глазами</td></tr>';\nconst html = `<!doctype html><html lang=\"ru\"><head><meta charset=\"utf-8\"><title>Акт описи ${esc(p.order_no)}</title><style>body{font-family:sans-serif;max-width:720px;margin:24px auto;padding:0 16px}td,th{border:1px solid #999;padding:6px}table{border-collapse:collapse;width:100%}code{word-break:break-all}</style></head><body>\n<h2>Технический акт описи № ${esc(p.order_no)}</h2>\n<p>Фотофиксация при вскрытии устройства. Время записи (UTC): <b>${esc(r.ts_utc)}</b>.</p>\n<table><tr><th>Компонент</th><th>Серийный номер</th><th>Уверенность</th></tr>${rows}</table>\n<p>${p.needs_review ? '<b>Требуется проверка глазами:</b> низкая уверенность распознавания.' : 'Распознавание прошло порог уверенности.'}</p>\n<p>SHA-256 фото: <code>${esc(r.image_sha256)}</code></p>\n<p>Хеш записи журнала: <code>${esc(r.record_sha256)}</code></p>\n<p>Предыдущая запись: <code>${esc(r.prev_record_sha256 || 'нет (первая запись)')}</code></p>\n<p style=\"color:#555;font-size:13px\">Хеш подтверждает, что файл фото не менялся после записи. Он не доказывает подлинность момента съёмки и сам по себе не гарантирует юридической силы акта. Согласие клиента на съёмку и форму акта проверьте у юриста.</p>\n<p>Клиент: ____________________ Инженер: ____________________</p></body></html>`;\nreturn { json: { act_html: html, order_no: p.order_no, chat_id: p.chat_id, needs_review: p.needs_review, ts_utc: r.ts_utc } };"
+      },
+      "name": "Собрать акт",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2400,
+        -340
+      ],
+      "id": "9ba0677c-3f97-5e30-be2f-22d30ec42c86",
+      "notes": "Why Code: сборка HTML-акта из данных записи с экранированием."
+    },
+    {
+      "parameters": {
+        "operation": "toText",
+        "sourceProperty": "act_html",
+        "options": {
+          "fileName": "=act_{{ $json.order_no }}.html"
+        }
+      },
+      "name": "Акт в HTML-файл",
+      "type": "n8n-nodes-base.convertToFile",
+      "typeVersion": 1.1,
+      "position": [
+        2640,
+        -340
+      ],
+      "id": "fc670535-8791-5f64-9034-5253ca6f6895"
+    },
+    {
+      "parameters": {
+        "resource": "message",
+        "operation": "sendDocument",
+        "chatId": "={{ $('Собрать акт').item.json.chat_id }}",
+        "binaryData": true,
+        "binaryPropertyName": "data",
+        "additionalFields": {
+          "caption": "={{ 'Акт описи ' + $('Собрать акт').item.json.order_no + ', время UTC ' + $('Собрать акт').item.json.ts_utc + ($('Собрать акт').item.json.needs_review ? '. ВНИМАНИЕ: проверьте серийные номера глазами.' : '.') }}",
+          "fileName": "={{ 'act_' + $('Собрать акт').item.json.order_no + '.html' }}"
+        }
+      },
+      "name": "Отправить акт",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        2880,
+        -340
+      ],
+      "id": "5734a2ac-a4dc-5d63-9795-c313f07f3e35",
+      "credentials": {
+        "telegramApi": {
+          "id": "",
+          "name": "Telegram Bot"
+        }
+      },
+      "notes": "Формат узла отправки файла сверьте в вашей версии n8n."
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 3 * * *"
+            }
+          ]
+        }
+      },
+      "name": "Каждую ночь 03:00",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        700
+      ],
+      "id": "ea1b4aaf-2de1-56fa-8fed-d8e6cb87e75e"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT verify_audit_chain() AS broken;",
+        "options": {}
+      },
+      "name": "Проверка цепочки хешей",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        240,
+        700
+      ],
+      "id": "37789236-6086-5c1b-8ab9-41a4be6f9ce4",
+      "credentials": {
+        "postgres": {
+          "id": "",
+          "name": "Service Audit PostgreSQL"
+        }
+      },
+      "notes": "0 = цепочка цела. Ненулевое значение значит, что записи менялись в обход триггеров или журнал повреждён.",
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": false,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ String($json.broken) }}",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              },
+              "rightValue": "0"
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "name": "Цепочка цела?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        480,
+        700
+      ],
+      "id": "012ed752-3380-579d-b56c-703205f25cc3"
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $env.ADMIN_CHAT_ID }}",
+        "text": "=ВНИМАНИЕ: проверка цепочки хешей журнала описи нашла нарушений: {{ $json.broken }}. Остановите правки в базе и проверьте резервные копии.",
+        "additionalFields": {
+          "appendAttribution": false
+        }
+      },
+      "name": "Тревога администратору",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        720,
+        820
+      ],
+      "id": "f3c6fa07-cfa5-5612-b116-c7d42734c5e5",
+      "credentials": {
+        "telegramApi": {
+          "id": "",
+          "name": "Telegram Bot"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT a.id, o.order_no, a.image_sha256, a.record_sha256, a.prev_record_sha256, a.needs_review, a.serials, to_char(a.timestamp_utc AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS') AS timestamp_utc FROM hardware_audit_log a JOIN repair_orders o ON o.id = a.order_id WHERE a.timestamp_utc > now() - interval '24 hours' ORDER BY a.id;",
+        "options": {}
+      },
+      "name": "Журнал за сутки",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        960,
+        700
+      ],
+      "id": "e11609be-2036-56ed-93ae-e51e5740826e",
+      "credentials": {
+        "postgres": {
+          "id": "",
+          "name": "Service Audit PostgreSQL"
+        }
+      },
+      "notes": "Выгрузка только метаданных, без фото: зашифрованные фото остаются в базе и в дампе backup.sh.",
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "operation": "toJson",
+        "mode": "once",
+        "options": {
+          "fileName": "=journal_{{ $now.toFormat('yyyyLLdd') }}.json"
+        }
+      },
+      "name": "В файл JSON",
+      "type": "n8n-nodes-base.convertToFile",
+      "typeVersion": 1.1,
+      "position": [
+        1200,
+        700
+      ],
+      "id": "89970e5b-7e6b-5b1a-8e8b-f5628d9766e5"
+    },
+    {
+      "parameters": {
+        "operation": "write",
+        "fileName": "=/backups/journal_{{ $now.toFormat('yyyyLLdd') }}.json",
+        "dataPropertyName": "data",
+        "options": {}
+      },
+      "name": "Записать в /backups",
+      "type": "n8n-nodes-base.readWriteFile",
+      "typeVersion": 1,
+      "position": [
+        1440,
+        700
+      ],
+      "id": "e8ff1b5f-a37b-5eb5-b611-6b7305b070a0",
+      "notes": "Выгрузка журнала в том backups. Полная копия базы делается backup.sh (правило 3-2-1)."
+    }
+  ],
+  "connections": {
+    "Telegram Trigger": {
+      "main": [
+        [
+          {
+            "node": "Есть фото?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Есть фото?": {
+      "main": [
+        [
+          {
+            "node": "Разобрать подпись",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Подсказка",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Разобрать подпись": {
+      "main": [
+        [
+          {
+            "node": "Подпись верна?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Подпись верна?": {
+      "main": [
+        [
+          {
+            "node": "Скачать фото",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Неверная подпись",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Скачать фото": {
+      "main": [
+        [
+          {
+            "node": "Хеш и шифрование",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Хеш и шифрование": {
+      "main": [
+        [
+          {
+            "node": "Ollama Vision",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Ollama Vision": {
+      "main": [
+        [
+          {
+            "node": "Разобрать ответ",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Разобрать ответ": {
+      "main": [
+        [
+          {
+            "node": "Записать в журнал",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Записать в журнал": {
+      "main": [
+        [
+          {
+            "node": "Запись создана?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Запись создана?": {
+      "main": [
+        [
+          {
+            "node": "Собрать акт",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Дубликат фото",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Собрать акт": {
+      "main": [
+        [
+          {
+            "node": "Акт в HTML-файл",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Акт в HTML-файл": {
+      "main": [
+        [
+          {
+            "node": "Отправить акт",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Каждую ночь 03:00": {
+      "main": [
+        [
+          {
+            "node": "Проверка цепочки хешей",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Проверка цепочки хешей": {
+      "main": [
+        [
+          {
+            "node": "Цепочка цела?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Цепочка цела?": {
+      "main": [
+        [
+          {
+            "node": "Журнал за сутки",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Тревога администратору",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Тревога администратору": {
+      "main": [
+        [
+          {
+            "node": "Журнал за сутки",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Журнал за сутки": {
+      "main": [
+        [
+          {
+            "node": "В файл JSON",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "В файл JSON": {
+      "main": [
+        [
+          {
+            "node": "Записать в /backups",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}
